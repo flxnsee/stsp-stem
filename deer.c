@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
         return 1;
     }
     setbuf(stdout, NULL);
-    srand(time(NULL));
+    srand(time(NULL) + getpid());
     FILE *f = fopen("observations.txt", "a");
     if (f == NULL) {
         perror("observations.txt");
@@ -137,6 +137,7 @@ int main(int argc, char *argv[])
         int id = wait_signal(ARRIVED);
         printf("Сигнал прибуття від експедиції %d (%d/%d)\n", id + 1, i + 1, n);
     }
+    time_t end = time(NULL) + duration, last = 0;
     for (int i = 0; i < n; i++) {
         if (write(fd[i][1], territories[i], strlen(territories[i])) == -1)
             perror("write");
@@ -144,7 +145,6 @@ int main(int argc, char *argv[])
     }
     for (int i = 0; i < n; i++)
         printf("Експедиція %s готова до роботи\n", territories[wait_signal(READY)]);
-    time_t end = time(NULL) + duration, last = 0;
     struct observation o;
     while (time(NULL) < end) {
         if (msgrcv(qid, &o, MSG_SIZE, 0, IPC_NOWAIT) > 0)
