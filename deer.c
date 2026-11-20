@@ -5,17 +5,30 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/msg.h>
 
 #define MAX 6
 #define ARRIVED SIGRTMIN
 #define READY (SIGRTMIN + 1)
 
+struct observation {
+    long mtype;
+    char observing_personname[64];
+    char territory_name[32];
+    int deer_number;
+    int deer_age;
+    time_t observation_time;
+};
+
+#define MSG_SIZE (sizeof(struct observation) - sizeof(long))
+
 const char *territories[MAX] = {"Карпати", "Чорногора", "Свидовець",
                                 "Горгани", "Мармароси", "Боржава"};
 const char *persons[MAX] = {"Олена Шевчук", "Іван Коваленко", "Петро Бондар",
                             "Марія Ткаченко", "Тарас Мельник", "Оксана Кравець"};
+const char *ages[3] = {"молодий", "дорослий", "старий"};
 
-void expedition(int id, int fd)
+void expedition(int id, int fd, int qid, int duration)
 {
     char name[32] = "";
     srand(getpid());
@@ -26,7 +39,28 @@ void expedition(int id, int fd)
     close(fd);
     printf("[%d] Отримано ідентифікаційний текст: %s\n", getpid(), name);
     sigqueue(getppid(), READY, (union sigval){.sival_int = id});
+    time_t end = time(NULL) + duration;
+    for (int k = 0; ; k++) {
+        sleep(2 + rand() % 4);
+        if (time(NULL) >= end)
+            break;
+        struct observation o = {1, "", "", 1 + rand() % 12, k % 3, time(NULL)};
+        strcpy(o.observing_personname, persons[id]);
+        strcpy(o.territory_name, name);
+        msgsnd(qid, &o, MSG_SIZE, 0);
+    }
     exit(0);
+}
+
+void save(FILE *f, struct observation *o)
+{
+    char t[32];
+    strftime(t, sizeof(t), "%d.%m.%Y %H:%M:%S", localtime(&o->observation_time));
+    fprintf(f, "%s | %s | %d | %s | %s\n", o->observing_personname, o->territory_name,
+            o->deer_number, ages[o->deer_age], t);
+    fflush(f);
+    printf("Записано: %s, %s, оленів: %d, вік: %s\n", o->territory_name,
+           o->observing_personname, o->deer_number, ages[o->deer_age]);
 }
 
 int wait_signal(int sig)
@@ -56,6 +90,11 @@ int main(int argc, char *argv[])
     sigaddset(&set, ARRIVED);
     sigaddset(&set, READY);
     sigprocmask(SIG_BLOCK, &set, NULL);
+    int qid = msgget(IPC_PRIVATE, IPC_CREAT | 0600);
+    if (qid == -1) {
+        perror("msgget");
+        return 1;
+    }
     int fd[MAX][2];
     pid_t pids[MAX];
     printf("Відправлено експедицій: %d, тривалість спостереження: %d с\n", n, duration);
@@ -64,7 +103,7 @@ int main(int argc, char *argv[])
         pids[i] = fork();
         if (pids[i] == 0) {
             close(fd[i][1]);
-            expedition(i, fd[i][0]);
+            expedition(i, fd[i][0], qid, duration);
         }
         close(fd[i][0]);
     }
@@ -78,8 +117,24 @@ int main(int argc, char *argv[])
     }
     for (int i = 0; i < n; i++)
         printf("Експедиція %s готова до роботи\n", territories[wait_signal(READY)]);
+    FILE *f = fopen("observations.txt", "a");
+    fseek(f, 0, SEEK_END);
+    if (ftell(f) == 0)
+        fprintf(f, "observing_personname | territory_name | deer_number | deer_age | observation_time\n");
+    time_t end = time(NULL) + duration;
+    struct observation o;
+    while (time(NULL) < end) {
+        if (msgrcv(qid, &o, MSG_SIZE, 0, IPC_NOWAIT) > 0)
+            save(f, &o);
+        else
+            usleep(100000);
+    }
     for (int i = 0; i < n; i++)
         waitpid(pids[i], NULL, 0);
-    printf("Усі експедиції завершили роботу\n");
+    while (msgrcv(qid, &o, MSG_SIZE, 0, IPC_NOWAIT) > 0)
+        save(f, &o);
+    fclose(f);
+    msgctl(qid, IPC_RMID, NULL);
+    printf("Спостереження завершено, дані збережено у observations.txt\n");
     return 0;
 }
