@@ -32,7 +32,8 @@ char note[128];
 void recall(int sig)
 {
     (void)sig;
-    write(STDOUT_FILENO, note, strlen(note));
+    if (write(STDOUT_FILENO, note, strlen(note)) == -1)
+        _exit(1);
     _exit(0);
 }
 
@@ -43,7 +44,8 @@ void expedition(int id, int fd, int qid, int duration)
     sleep(1 + rand() % 3);
     printf("[%d] Експедиція %d (%s) прибула на місце\n", getpid(), id + 1, persons[id]);
     sigqueue(getppid(), ARRIVED, (union sigval){.sival_int = id});
-    read(fd, name, sizeof(name) - 1);
+    if (read(fd, name, sizeof(name) - 1) <= 0)
+        exit(1);
     close(fd);
     printf("[%d] Отримано ідентифікаційний текст: %s\n", getpid(), name);
     snprintf(note, sizeof(note), "[%d] Експедиція %s повертається на базу\n", getpid(), name);
@@ -119,8 +121,11 @@ int main(int argc, char *argv[])
     pid_t pids[MAX];
     printf("Відправлено експедицій: %d, тривалість спостереження: %d с\n", n, duration);
     for (int i = 0; i < n; i++) {
-        pipe(fd[i]);
-        pids[i] = fork();
+        if (pipe(fd[i]) == -1 || (pids[i] = fork()) == -1) {
+            perror("pipe/fork");
+            msgctl(qid, IPC_RMID, NULL);
+            return 1;
+        }
         if (pids[i] == 0) {
             close(fd[i][1]);
             expedition(i, fd[i][0], qid, duration);
@@ -133,7 +138,8 @@ int main(int argc, char *argv[])
         printf("Сигнал прибуття від експедиції %d (%d/%d)\n", id + 1, i + 1, n);
     }
     for (int i = 0; i < n; i++) {
-        write(fd[i][1], territories[i], strlen(territories[i]));
+        if (write(fd[i][1], territories[i], strlen(territories[i])) == -1)
+            perror("write");
         close(fd[i][1]);
     }
     for (int i = 0; i < n; i++)
