@@ -27,6 +27,14 @@ const char *territories[MAX] = {"Карпати", "Чорногора", "Сви�
 const char *persons[MAX] = {"Олена Шевчук", "Іван Коваленко", "Петро Бондар",
                             "Марія Ткаченко", "Тарас Мельник", "Оксана Кравець"};
 const char *ages[3] = {"молодий", "дорослий", "старий"};
+char note[128];
+
+void recall(int sig)
+{
+    (void)sig;
+    write(STDOUT_FILENO, note, strlen(note));
+    _exit(0);
+}
 
 void expedition(int id, int fd, int qid, int duration)
 {
@@ -38,6 +46,8 @@ void expedition(int id, int fd, int qid, int duration)
     read(fd, name, sizeof(name) - 1);
     close(fd);
     printf("[%d] Отримано ідентифікаційний текст: %s\n", getpid(), name);
+    snprintf(note, sizeof(note), "[%d] Експедиція %s повертається на базу\n", getpid(), name);
+    signal(SIGTERM, recall);
     sigqueue(getppid(), READY, (union sigval){.sival_int = id});
     time_t end = time(NULL) + duration;
     for (int k = 0; ; k++) {
@@ -85,6 +95,7 @@ int main(int argc, char *argv[])
         return 1;
     }
     setbuf(stdout, NULL);
+    srand(time(NULL));
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, ARRIVED);
@@ -95,7 +106,7 @@ int main(int argc, char *argv[])
         perror("msgget");
         return 1;
     }
-    int fd[MAX][2];
+    int fd[MAX][2], alive[MAX], left = n;
     pid_t pids[MAX];
     printf("Відправлено експедицій: %d, тривалість спостереження: %d с\n", n, duration);
     for (int i = 0; i < n; i++) {
@@ -106,6 +117,7 @@ int main(int argc, char *argv[])
             expedition(i, fd[i][0], qid, duration);
         }
         close(fd[i][0]);
+        alive[i] = 1;
     }
     for (int i = 0; i < n; i++) {
         int id = wait_signal(ARRIVED);
@@ -121,20 +133,32 @@ int main(int argc, char *argv[])
     fseek(f, 0, SEEK_END);
     if (ftell(f) == 0)
         fprintf(f, "observing_personname | territory_name | deer_number | deer_age | observation_time\n");
-    time_t end = time(NULL) + duration;
+    time_t end = time(NULL) + duration, last = 0;
     struct observation o;
     while (time(NULL) < end) {
         if (msgrcv(qid, &o, MSG_SIZE, 0, IPC_NOWAIT) > 0)
             save(f, &o);
         else
             usleep(100000);
+        if (time(NULL) != last) {
+            last = time(NULL);
+            int i = rand() % n;
+            if (left > 1 && alive[i] && rand() % 10 == 0) {
+                printf("Експедицію %s відкликано через втому\n", territories[i]);
+                kill(pids[i], SIGTERM);
+                waitpid(pids[i], NULL, 0);
+                alive[i] = 0;
+                left--;
+            }
+        }
     }
     for (int i = 0; i < n; i++)
-        waitpid(pids[i], NULL, 0);
+        if (alive[i])
+            waitpid(pids[i], NULL, 0);
     while (msgrcv(qid, &o, MSG_SIZE, 0, IPC_NOWAIT) > 0)
         save(f, &o);
     fclose(f);
     msgctl(qid, IPC_RMID, NULL);
-    printf("Спостереження завершено, дані збережено у observations.txt\n");
+    printf("Спостереження завершено, до кінця працювало: %d, відкликано: %d\n", left, n - left);
     return 0;
 }
