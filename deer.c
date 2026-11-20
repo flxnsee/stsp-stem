@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
         return 1;
     }
     setbuf(stdout, NULL);
-    srand(time(NULL));
+    srand(time(NULL) + getpid());
     FILE *f = fopen("observations.txt", "a");
     if (f == NULL) {
         perror("observations.txt");
