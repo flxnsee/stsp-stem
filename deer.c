@@ -96,6 +96,15 @@ int main(int argc, char *argv[])
     }
     setbuf(stdout, NULL);
     srand(time(NULL));
+    FILE *f = fopen("observations.txt", "a");
+    if (f == NULL) {
+        perror("observations.txt");
+        return 1;
+    }
+    fseek(f, 0, SEEK_END);
+    if (ftell(f) == 0)
+        fprintf(f, "observing_personname | territory_name | deer_number | deer_age | observation_time\n");
+    fflush(f);
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, ARRIVED);
@@ -129,10 +138,6 @@ int main(int argc, char *argv[])
     }
     for (int i = 0; i < n; i++)
         printf("Експедиція %s готова до роботи\n", territories[wait_signal(READY)]);
-    FILE *f = fopen("observations.txt", "a");
-    fseek(f, 0, SEEK_END);
-    if (ftell(f) == 0)
-        fprintf(f, "observing_personname | territory_name | deer_number | deer_age | observation_time\n");
     time_t end = time(NULL) + duration, last = 0;
     struct observation o;
     while (time(NULL) < end) {
